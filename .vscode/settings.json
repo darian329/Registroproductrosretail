@@ -1,8 +1,10 @@
 {
     "java.project.sourcePaths": [
-        "."
+        "registro-productos-retail",
+        "prestamo-libros",
+        "new"
     ],
     "java.project.referencedLibraries": [
-        "d:\\codin\\mysql-connector-j-26.7.0.jar"
+        "registro-productos-retail/lib/**/*.jar"
     ]
 }
