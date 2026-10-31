@@ -33,7 +33,7 @@ public class SistemaCaja extends JFrame {
         gbc.insets = new Insets(6, 6, 6, 6);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        gbc.gridx = 0; gbc.gridy = 0; panelVenta.add(new JLabel("Código de Producto:"), gbc);
+        gbc.gridx = 0; gbc.gridy = 0; panelVenta.add(new JLabel("Código (escanee o escriba):"), gbc);
         gbc.gridx = 1; txtCodigoBusqueda = new JTextField(12); panelVenta.add(txtCodigoBusqueda, gbc);
 
         gbc.gridx = 2; gbc.gridy = 0; panelVenta.add(new JLabel("Cantidad:"), gbc);
@@ -103,8 +103,16 @@ public class SistemaCaja extends JFrame {
             }
         });
 
+        // El lector de código de barras funciona como teclado: escribe el código y envía Enter.
         // Enter avanza: código -> cantidad -> dinero recibido -> cobrar
-        txtCodigoBusqueda.addActionListener(e -> txtCantidad.requestFocusInWindow());
+        txtCodigoBusqueda.addActionListener(e -> buscarPorEscaneo());
+        txtCodigoBusqueda.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent e) {
+                // Seleccionado: el próximo escaneo reemplaza el código anterior en vez de sumarse
+                SwingUtilities.invokeLater(txtCodigoBusqueda::selectAll);
+            }
+        });
         txtCantidad.addActionListener(e -> txtDineroRecibido.requestFocusInWindow());
         txtDineroRecibido.addActionListener(e -> ejecutarVenta());
 
@@ -179,6 +187,21 @@ public class SistemaCaja extends JFrame {
         }
     }
 
+    private void buscarPorEscaneo() {
+        String codigo = txtCodigoBusqueda.getText().trim();
+        if (codigo.isEmpty()) return;
+
+        buscarProductoPorCodigo(codigo);
+        if (codigoActual.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No existe un producto con el código " + codigo + ".", "Producto no encontrado", JOptionPane.WARNING_MESSAGE);
+            txtCodigoBusqueda.requestFocusInWindow();
+            txtCodigoBusqueda.selectAll();
+            return;
+        }
+        txtCantidad.requestFocusInWindow();
+        txtCantidad.selectAll();
+    }
+
     private void calcularTotal() {
         try {
             int cantidad = Integer.parseInt(txtCantidad.getText().trim());
@@ -224,6 +247,18 @@ public class SistemaCaja extends JFrame {
             }
 
             BigDecimal vuelto = dineroRecibido.subtract(totalPagar);
+
+            // Un vuelto muy alto suele ser un error de digitación o un código escaneado en este campo
+            if (vuelto.compareTo(new BigDecimal("100000")) >= 0) {
+                int r = JOptionPane.showConfirmDialog(this,
+                        "Dinero recibido: " + Moneda.formatear(dineroRecibido) + "\nVuelto: " + Moneda.formatear(vuelto) + "\n\n¿Es correcto?",
+                        "Revise el dinero recibido", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                if (r != JOptionPane.YES_OPTION) {
+                    txtDineroRecibido.requestFocusInWindow();
+                    txtDineroRecibido.selectAll();
+                    return;
+                }
+            }
 
             // Resta sobre el stock real y solo si alcanza
             String sql = "UPDATE productos SET stock = stock - ? WHERE codigo = ? AND stock >= ?";
@@ -282,6 +317,7 @@ public class SistemaCaja extends JFrame {
         txtDineroRecibido.setText("");
         limpiarDatosProducto();
         tablaProductosCaja.clearSelection();
+        txtCodigoBusqueda.requestFocusInWindow(); // Listo para escanear el siguiente producto
     }
 
     // MAIN INDEPENDIENTE PARA EL VENDEDOR

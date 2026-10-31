@@ -25,7 +25,7 @@ public class RegistroProductosRetail extends JFrame {
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        gbc.gridx = 0; gbc.gridy = 0; panelFormulario.add(new JLabel("Código:"), gbc);
+        gbc.gridx = 0; gbc.gridy = 0; panelFormulario.add(new JLabel("Código (escanee o escriba):"), gbc);
         gbc.gridx = 1; txtCodigo = new JTextField(15); panelFormulario.add(txtCodigo, gbc);
 
         gbc.gridx = 0; gbc.gridy = 1; panelFormulario.add(new JLabel("Nombre:"), gbc);
@@ -74,6 +74,10 @@ public class RegistroProductosRetail extends JFrame {
         btnActualizar.addActionListener(e -> actualizarProducto());
         btnEliminar.addActionListener(e -> eliminarProducto());
         btnLimpiar.addActionListener(e -> limpiarCampos());
+
+        // Lector de código de barras (escribe el código + Enter): si el producto existe se
+        // selecciona para editarlo; si es nuevo se pasa a escribir el nombre.
+        txtCodigo.addActionListener(e -> buscarCodigoEnTabla());
 
         // Funciona con clic y con las flechas del teclado
         tablaProductos.getSelectionModel().addListSelectionListener(e -> {
@@ -239,6 +243,21 @@ public class RegistroProductosRetail extends JFrame {
             return false;
         }
         return true;
+    }
+
+    private void buscarCodigoEnTabla() {
+        String codigo = txtCodigo.getText().trim();
+        if (codigo.isEmpty() || hayProductoSeleccionado()) return;
+
+        for (int fila = 0; fila < modeloTabla.getRowCount(); fila++) {
+            if (modeloTabla.getValueAt(fila, 0).toString().equalsIgnoreCase(codigo)) {
+                tablaProductos.setRowSelectionInterval(fila, fila);
+                tablaProductos.scrollRectToVisible(tablaProductos.getCellRect(fila, 0, true));
+                txtNombre.requestFocusInWindow();
+                return;
+            }
+        }
+        txtNombre.requestFocusInWindow();
     }
 
     private boolean hayProductoSeleccionado() {
