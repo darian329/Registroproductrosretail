@@ -34,22 +34,31 @@ public class Login extends JFrame {
 
         add(panel, BorderLayout.CENTER);
 
-        // Evento de login
+        // Evento de login (clic o tecla Enter)
         btnIngresar.addActionListener(e -> validarLogin());
+        getRootPane().setDefaultButton(btnIngresar);
     }
 
     private void validarLogin() {
         String usuario = txtUsuario.getText().trim();
         String password = new String(txtContrasena.getPassword()).trim();
 
+        if (usuario.isEmpty() || password.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Escriba el usuario y la contraseña.", "Faltan datos", JOptionPane.WARNING_MESSAGE);
+            (usuario.isEmpty() ? txtUsuario : txtContrasena).requestFocusInWindow();
+            return;
+        }
+
         // Credenciales fijas de ejemplo (puedes cambiarlas o validarlas con BD si prefieres)
         if (usuario.equals("admin") && password.equals("1234")) {
-            JOptionPane.showMessageDialog(this, "¡Bienvenido, Administrador!");
+            JOptionPane.showMessageDialog(this, "¡Bienvenido, Administrador!", "Acceso concedido", JOptionPane.INFORMATION_MESSAGE);
             // Abre la ventana de gestión de productos (CRUD)
             new RegistroProductosRetail().setVisible(true);
             this.dispose(); // Cierra la ventana de login
         } else {
             JOptionPane.showMessageDialog(this, "Usuario o contraseña incorrectos.", "Error de Acceso", JOptionPane.ERROR_MESSAGE);
+            txtContrasena.setText("");
+            txtContrasena.requestFocusInWindow();
         }
     }
 

@@ -1,8 +1,7 @@
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
+import java.math.BigDecimal;
 import java.sql.*;
 
 public class RegistroProductosRetail extends JFrame {
@@ -61,8 +60,14 @@ public class RegistroProductosRetail extends JFrame {
         add(panelFormulario, BorderLayout.NORTH);
 
         String[] columnas = {"Código", "Nombre", "Categoría", "Precio", "Stock"};
-        modeloTabla = new DefaultTableModel(columnas, 0);
+        modeloTabla = new DefaultTableModel(columnas, 0) {
+            @Override
+            public boolean isCellEditable(int fila, int columna) {
+                return false; // Los cambios se hacen en el formulario, no en la tabla
+            }
+        };
         tablaProductos = new JTable(modeloTabla);
+        tablaProductos.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         add(new JScrollPane(tablaProductos), BorderLayout.CENTER);
 
         btnAgregar.addActionListener(e -> agregarProducto());
@@ -70,19 +75,22 @@ public class RegistroProductosRetail extends JFrame {
         btnEliminar.addActionListener(e -> eliminarProducto());
         btnLimpiar.addActionListener(e -> limpiarCampos());
 
-        tablaProductos.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                int fila = tablaProductos.getSelectedRow();
-                if (fila >= 0) {
-                    txtCodigo.setText(modeloTabla.getValueAt(fila, 0).toString());
-                    txtCodigo.setEditable(false);
-                    txtNombre.setText(modeloTabla.getValueAt(fila, 1).toString());
-                    cbCategoria.setSelectedItem(modeloTabla.getValueAt(fila, 2).toString());
-                    txtPrecio.setText(modeloTabla.getValueAt(fila, 3).toString().replace("$", ""));
-                    txtStock.setText(modeloTabla.getValueAt(fila, 4).toString());
-                }
+        // Funciona con clic y con las flechas del teclado
+        tablaProductos.getSelectionModel().addListSelectionListener(e -> {
+            int fila = tablaProductos.getSelectedRow();
+            if (e.getValueIsAdjusting() || fila < 0) return;
+
+            txtCodigo.setText(modeloTabla.getValueAt(fila, 0).toString());
+            txtCodigo.setEditable(false);
+            txtNombre.setText(modeloTabla.getValueAt(fila, 1).toString());
+            String categoria = modeloTabla.getValueAt(fila, 2).toString();
+            if (((DefaultComboBoxModel<String>) cbCategoria.getModel()).getIndexOf(categoria) < 0) {
+                cbCategoria.addItem(categoria); // Categoría que no estaba en la lista
             }
+            cbCategoria.setSelectedItem(categoria);
+            txtPrecio.setText(modeloTabla.getValueAt(fila, 3).toString().replace("$", ""));
+            txtStock.setText(modeloTabla.getValueAt(fila, 4).toString());
+            btnAgregar.setEnabled(false); // Un producto ya existente se actualiza, no se guarda de nuevo
         });
 
         cargarProductos();
@@ -100,13 +108,13 @@ public class RegistroProductosRetail extends JFrame {
                     rs.getString("codigo"),
                     rs.getString("nombre"),
                     rs.getString("categoria"),
-                    String.format("$%.2f", rs.getDouble("precio")),
+                    Moneda.formatear(rs.getBigDecimal("precio")),
                     rs.getInt("stock")
                 };
                 modeloTabla.addRow(fila);
             }
         } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Error al cargar productos: " + e.getMessage(), "Error BD", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "No se pudieron cargar los productos.\nVerifique que Laragon (MySQL) esté encendido.\n\nDetalle: " + e.getMessage(), "Error BD", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -116,7 +124,7 @@ public class RegistroProductosRetail extends JFrame {
         String codigo = txtCodigo.getText().trim();
         String nombre = txtNombre.getText().trim();
         String categoria = (String) cbCategoria.getSelectedItem();
-        double precio = Double.parseDouble(txtPrecio.getText().trim());
+        BigDecimal precio = Moneda.leer(txtPrecio.getText());
         int stock = Integer.parseInt(txtStock.getText().trim());
 
         String sql = "INSERT INTO productos (codigo, nombre, categoria, precio, stock) VALUES (?, ?, ?, ?, ?)";
@@ -126,7 +134,7 @@ public class RegistroProductosRetail extends JFrame {
             ps.setString(1, codigo);
             ps.setString(2, nombre);
             ps.setString(3, categoria);
-            ps.setDouble(4, precio);
+            ps.setBigDecimal(4, precio);
             ps.setInt(5, stock);
 
             ps.executeUpdate();
@@ -134,16 +142,19 @@ public class RegistroProductosRetail extends JFrame {
             cargarProductos();
             limpiarCampos();
 
+        } catch (SQLIntegrityConstraintViolationException e) {
+            JOptionPane.showMessageDialog(this, "Ya existe un producto con el código " + codigo + ".", "Código repetido", JOptionPane.ERROR_MESSAGE);
         } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Error al guardar (código duplicado): " + e.getMessage(), "Error BD", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "No se pudo guardar el producto.\n\nDetalle: " + e.getMessage(), "Error BD", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void actualizarProducto() {
-        if (txtCodigo.getText().trim().isEmpty() || !validarCampos()) {
+        if (!hayProductoSeleccionado()) {
             JOptionPane.showMessageDialog(this, "Seleccione un producto de la tabla para actualizar.", "Aviso", JOptionPane.WARNING_MESSAGE);
             return;
         }
+        if (!validarCampos()) return;
 
         String sql = "UPDATE productos SET nombre=?, categoria=?, precio=?, stock=? WHERE codigo=?";
         try (Connection con = Conexion.obtenerConexion();
@@ -151,11 +162,16 @@ public class RegistroProductosRetail extends JFrame {
 
             ps.setString(1, txtNombre.getText().trim());
             ps.setString(2, (String) cbCategoria.getSelectedItem());
-            ps.setDouble(3, Double.parseDouble(txtPrecio.getText().trim()));
+            ps.setBigDecimal(3, Moneda.leer(txtPrecio.getText()));
             ps.setInt(4, Integer.parseInt(txtStock.getText().trim()));
             ps.setString(5, txtCodigo.getText().trim());
 
-            ps.executeUpdate();
+            if (ps.executeUpdate() == 0) {
+                JOptionPane.showMessageDialog(this, "El producto ya no existe. Se recargará la lista.", "Aviso", JOptionPane.WARNING_MESSAGE);
+                cargarProductos();
+                limpiarCampos();
+                return;
+            }
             JOptionPane.showMessageDialog(this, "Producto actualizado correctamente.");
             cargarProductos();
             limpiarCampos();
@@ -167,8 +183,8 @@ public class RegistroProductosRetail extends JFrame {
 
     private void eliminarProducto() {
         String codigo = txtCodigo.getText().trim();
-        if (codigo.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Seleccione un producto para eliminar.", "Aviso", JOptionPane.WARNING_MESSAGE);
+        if (!hayProductoSeleccionado()) {
+            JOptionPane.showMessageDialog(this, "Seleccione en la tabla el producto que desea eliminar.", "Aviso", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -179,8 +195,11 @@ public class RegistroProductosRetail extends JFrame {
                  PreparedStatement ps = con.prepareStatement(sql)) {
 
                 ps.setString(1, codigo);
-                ps.executeUpdate();
-                JOptionPane.showMessageDialog(this, "Producto eliminado.");
+                if (ps.executeUpdate() == 0) {
+                    JOptionPane.showMessageDialog(this, "El producto ya no existía.", "Aviso", JOptionPane.WARNING_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(this, "Producto eliminado.");
+                }
                 cargarProductos();
                 limpiarCampos();
 
@@ -196,18 +215,35 @@ public class RegistroProductosRetail extends JFrame {
             JOptionPane.showMessageDialog(this, "Todos los campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
             return false;
         }
+        if (txtCodigo.getText().trim().length() > 50 || txtNombre.getText().trim().length() > 100) {
+            JOptionPane.showMessageDialog(this, "El código admite hasta 50 caracteres y el nombre hasta 100.", "Error", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        BigDecimal p = Moneda.leer(txtPrecio.getText());
+        if (p == null || Moneda.tieneMasDeDosDecimales(p)) {
+            JOptionPane.showMessageDialog(this, "Escriba el precio solo con números, por ejemplo 1500 o 1.500.", "Error", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        if (p.signum() <= 0 || p.compareTo(new BigDecimal("100000000")) >= 0) {
+            JOptionPane.showMessageDialog(this, "El precio debe ser mayor a 0 y menor a $100.000.000.", "Error", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
         try {
-            double p = Double.parseDouble(txtPrecio.getText().trim());
             int s = Integer.parseInt(txtStock.getText().trim());
-            if (p <= 0 || s < 0) {
-                JOptionPane.showMessageDialog(this, "El precio debe ser mayor a 0 y el stock no puede ser negativo.", "Error", JOptionPane.ERROR_MESSAGE);
+            if (s < 0) {
+                JOptionPane.showMessageDialog(this, "El stock no puede ser negativo.", "Error", JOptionPane.ERROR_MESSAGE);
                 return false;
             }
         } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(this, "Formato numérico inválido en Precio o Stock.", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Escriba el stock como un número entero, por ejemplo 10.", "Error", JOptionPane.ERROR_MESSAGE);
             return false;
         }
         return true;
+    }
+
+    private boolean hayProductoSeleccionado() {
+        // El código queda bloqueado solo cuando se eligió un producto de la tabla
+        return !txtCodigo.isEditable() && !txtCodigo.getText().trim().isEmpty();
     }
 
     private void limpiarCampos() {
@@ -218,5 +254,6 @@ public class RegistroProductosRetail extends JFrame {
         txtStock.setText("");
         cbCategoria.setSelectedIndex(0);
         tablaProductos.clearSelection();
+        btnAgregar.setEnabled(true);
     }
 }

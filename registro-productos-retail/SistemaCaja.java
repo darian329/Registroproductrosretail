@@ -3,6 +3,7 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.math.BigDecimal;
 import java.sql.*;
 
 public class SistemaCaja extends JFrame {
@@ -13,9 +14,10 @@ public class SistemaCaja extends JFrame {
     private DefaultTableModel modeloTablaCaja;
     private JButton btnRealizarVenta, btnLimpiarCaja;
     
-    private double precioActual = 0.0;
+    private BigDecimal precioActual = BigDecimal.ZERO;
     private int stockActual = 0;
     private String nombreActual = "";
+    private String codigoActual = ""; // Código del producto mostrado (el que se vende)
 
     public SistemaCaja() {
         setTitle("Sistema de Caja - Supermercado (Vendedor)");
@@ -43,7 +45,7 @@ public class SistemaCaja extends JFrame {
         gbc.gridx = 1; panelVenta.add(lblNombreProd, gbc);
 
         gbc.gridx = 2; gbc.gridy = 1; panelVenta.add(new JLabel("Precio Unit.:"), gbc);
-        lblPrecioProd = new JLabel("$0.00");
+        lblPrecioProd = new JLabel("$0");
         gbc.gridx = 3; panelVenta.add(lblPrecioProd, gbc);
 
         gbc.gridx = 0; gbc.gridy = 2; panelVenta.add(new JLabel("Stock Disp.:"), gbc);
@@ -51,7 +53,7 @@ public class SistemaCaja extends JFrame {
         gbc.gridx = 1; panelVenta.add(lblStockProd, gbc);
 
         gbc.gridx = 2; gbc.gridy = 2; panelVenta.add(new JLabel("Total a Pagar:"), gbc);
-        lblTotalPagar = new JLabel("$0.00");
+        lblTotalPagar = new JLabel("$0");
         lblTotalPagar.setForeground(new Color(192, 57, 43));
         lblTotalPagar.setFont(new Font("Arial", Font.BOLD, 14));
         gbc.gridx = 3; panelVenta.add(lblTotalPagar, gbc);
@@ -77,7 +79,12 @@ public class SistemaCaja extends JFrame {
 
         // Tabla de inventario para el cajero
         String[] columnas = {"Código", "Nombre", "Categoría", "Precio", "Stock"};
-        modeloTablaCaja = new DefaultTableModel(columnas, 0);
+        modeloTablaCaja = new DefaultTableModel(columnas, 0) {
+            @Override
+            public boolean isCellEditable(int fila, int columna) {
+                return false;
+            }
+        };
         tablaProductosCaja = new JTable(modeloTablaCaja);
         add(new JScrollPane(tablaProductosCaja), BorderLayout.CENTER);
 
@@ -95,6 +102,11 @@ public class SistemaCaja extends JFrame {
                 calcularTotal();
             }
         });
+
+        // Enter avanza: código -> cantidad -> dinero recibido -> cobrar
+        txtCodigoBusqueda.addActionListener(e -> txtCantidad.requestFocusInWindow());
+        txtCantidad.addActionListener(e -> txtDineroRecibido.requestFocusInWindow());
+        txtDineroRecibido.addActionListener(e -> ejecutarVenta());
 
         btnRealizarVenta.addActionListener(e -> ejecutarVenta());
         btnLimpiarCaja.addActionListener(e -> limpiarCaja());
@@ -126,13 +138,13 @@ public class SistemaCaja extends JFrame {
                     rs.getString("codigo"),
                     rs.getString("nombre"),
                     rs.getString("categoria"),
-                    String.format("$%.2f", rs.getDouble("precio")),
+                    Moneda.formatear(rs.getBigDecimal("precio")),
                     rs.getInt("stock")
                 };
                 modeloTablaCaja.addRow(fila);
             }
         } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Error al cargar inventario: " + e.getMessage());
+            JOptionPane.showMessageDialog(this, "No se pudo cargar el inventario.\nVerifique que Laragon (MySQL) esté encendido.\n\nDetalle: " + e.getMessage(), "Error BD", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -150,12 +162,13 @@ public class SistemaCaja extends JFrame {
             ResultSet rs = ps.executeQuery();
 
             if (rs.next()) {
+                codigoActual = rs.getString("codigo");
                 nombreActual = rs.getString("nombre");
-                precioActual = rs.getDouble("precio");
+                precioActual = rs.getBigDecimal("precio");
                 stockActual = rs.getInt("stock");
 
                 lblNombreProd.setText(nombreActual);
-                lblPrecioProd.setText(String.format("$%.2f", precioActual));
+                lblPrecioProd.setText(Moneda.formatear(precioActual));
                 lblStockProd.setText(String.valueOf(stockActual));
                 calcularTotal();
             } else {
@@ -169,15 +182,17 @@ public class SistemaCaja extends JFrame {
     private void calcularTotal() {
         try {
             int cantidad = Integer.parseInt(txtCantidad.getText().trim());
-            double total = precioActual * cantidad;
-            lblTotalPagar.setText(String.format("$%.2f", total));
+            BigDecimal total = cantidad > 0 ? precioActual.multiply(BigDecimal.valueOf(cantidad)) : BigDecimal.ZERO;
+            lblTotalPagar.setText(Moneda.formatear(total));
         } catch (NumberFormatException e) {
-            lblTotalPagar.setText("$0.00");
+            lblTotalPagar.setText("$0");
         }
     }
 
     private void ejecutarVenta() {
-        String codigo = txtCodigoBusqueda.getText().trim();
+        // Se vuelve a buscar el producto escrito, para vender con su precio y stock actuales
+        buscarProductoPorCodigo(txtCodigoBusqueda.getText().trim());
+        String codigo = codigoActual;
         if (codigo.isEmpty() || nombreActual.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Ingrese un código de producto válido.", "Error", JOptionPane.WARNING_MESSAGE);
             return;
@@ -185,7 +200,11 @@ public class SistemaCaja extends JFrame {
 
         try {
             int cantidadVenta = Integer.parseInt(txtCantidad.getText().trim());
-            double dineroRecibido = Double.parseDouble(txtDineroRecibido.getText().trim());
+            BigDecimal dineroRecibido = Moneda.leer(txtDineroRecibido.getText());
+            if (dineroRecibido == null || Moneda.tieneMasDeDosDecimales(dineroRecibido)) {
+                JOptionPane.showMessageDialog(this, "Escriba el dinero recibido solo con números, por ejemplo 5000 o 5.000.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
 
             if (cantidadVenta <= 0) {
                 JOptionPane.showMessageDialog(this, "La cantidad debe ser mayor a 0.", "Error", JOptionPane.ERROR_MESSAGE);
@@ -197,33 +216,39 @@ public class SistemaCaja extends JFrame {
                 return;
             }
 
-            double totalPagar = precioActual * cantidadVenta;
+            BigDecimal totalPagar = precioActual.multiply(BigDecimal.valueOf(cantidadVenta));
 
-            if (dineroRecibido < totalPagar) {
-                JOptionPane.showMessageDialog(this, "El dinero recibido es insuficiente. Total: $" + totalPagar, "Dinero Insuficiente", JOptionPane.ERROR_MESSAGE);
+            if (dineroRecibido.compareTo(totalPagar) < 0) {
+                JOptionPane.showMessageDialog(this, "El dinero recibido es insuficiente. Total: " + Moneda.formatear(totalPagar), "Dinero Insuficiente", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
-            double vuelto = dineroRecibido - totalPagar;
-            int nuevoStock = stockActual - cantidadVenta;
+            BigDecimal vuelto = dineroRecibido.subtract(totalPagar);
 
-            String sql = "UPDATE productos SET stock = ? WHERE codigo = ?";
+            // Resta sobre el stock real y solo si alcanza
+            String sql = "UPDATE productos SET stock = stock - ? WHERE codigo = ? AND stock >= ?";
             try (Connection con = Conexion.obtenerConexion();
                  PreparedStatement ps = con.prepareStatement(sql)) {
 
-                ps.setInt(1, nuevoStock);
+                ps.setInt(1, cantidadVenta);
                 ps.setString(2, codigo);
-                ps.executeUpdate();
+                ps.setInt(3, cantidadVenta);
+                if (ps.executeUpdate() == 0) {
+                    JOptionPane.showMessageDialog(this, "No se pudo vender: el producto ya no tiene stock suficiente.", "Stock", JOptionPane.ERROR_MESSAGE);
+                    cargarInventarioCaja();
+                    buscarProductoPorCodigo(codigo);
+                    return;
+                }
 
                 String ticket = "=== TICKET DE VENTA (CAJA) ===\n" +
                                 "Producto: " + nombreActual + "\n" +
                                 "Código: " + codigo + "\n" +
                                 "Cantidad: " + cantidadVenta + "\n" +
-                                "Precio Unit.: $" + precioActual + "\n" +
+                                "Precio Unit.: " + Moneda.formatear(precioActual) + "\n" +
                                 "-----------------------------------\n" +
-                                "Total a Pagar: $" + totalPagar + "\n" +
-                                "Dinero Recibido: $" + dineroRecibido + "\n" +
-                                "Vuelto Exacto: $" + String.format("%.2f", vuelto) + "\n" +
+                                "Total a Pagar: " + Moneda.formatear(totalPagar) + "\n" +
+                                "Dinero Recibido: " + Moneda.formatear(dineroRecibido) + "\n" +
+                                "Vuelto: " + Moneda.formatear(vuelto) + "\n" +
                                 "===================================";
 
                 JOptionPane.showMessageDialog(this, ticket, "Venta Exitosa", JOptionPane.INFORMATION_MESSAGE);
@@ -236,18 +261,19 @@ public class SistemaCaja extends JFrame {
             }
 
         } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(this, "Verifique los campos numéricos (Cantidad y Dinero Recibido).", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Escriba la cantidad como un número entero, por ejemplo 1 o 2.", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void limpiarDatosProducto() {
+        codigoActual = "";
         nombreActual = "";
-        precioActual = 0.0;
+        precioActual = BigDecimal.ZERO;
         stockActual = 0;
         lblNombreProd.setText("---");
-        lblPrecioProd.setText("$0.00");
+        lblPrecioProd.setText("$0");
         lblStockProd.setText("0");
-        lblTotalPagar.setText("$0.00");
+        lblTotalPagar.setText("$0");
     }
 
     private void limpiarCaja() {
